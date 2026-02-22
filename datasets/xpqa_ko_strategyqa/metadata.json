@@ -1,0 +1,123 @@
+{
+  "source": "local_csv",
+  "data_dir": "datasets/xpqa_ko_strategyqa",
+  "languages": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "hi",
+    "it",
+    "ja",
+    "ko",
+    "pl",
+    "pt",
+    "ta",
+    "zh"
+  ],
+  "default_language": "ko",
+  "split_mapping": {
+    "train": "train",
+    "dev": "dev",
+    "test": "test"
+  },
+  "per_language": {
+    "ar": {
+      "config_prefix": "arabic",
+      "num_queries": 2296,
+      "num_corpus": 2296,
+      "num_qrels_train": 607,
+      "num_qrels_dev": 145,
+      "num_qrels_test": 1544
+    },
+    "de": {
+      "config_prefix": "german",
+      "num_queries": 2310,
+      "num_corpus": 2310,
+      "num_qrels_train": 632,
+      "num_qrels_dev": 174,
+      "num_qrels_test": 1504
+    },
+    "es": {
+      "config_prefix": "spanish",
+      "num_queries": 2964,
+      "num_corpus": 2964,
+      "num_qrels_train": 816,
+      "num_qrels_dev": 187,
+      "num_qrels_test": 1961
+    },
+    "fr": {
+      "config_prefix": "french",
+      "num_queries": 2522,
+      "num_corpus": 2522,
+      "num_qrels_train": 675,
+      "num_qrels_dev": 163,
+      "num_qrels_test": 1684
+    },
+    "hi": {
+      "config_prefix": "hindi",
+      "num_queries": 2592,
+      "num_corpus": 2343,
+      "num_qrels_train": 724,
+      "num_qrels_dev": 198,
+      "num_qrels_test": 1670
+    },
+    "it": {
+      "config_prefix": "italian",
+      "num_queries": 1887,
+      "num_corpus": 1887,
+      "num_qrels_train": 469,
+      "num_qrels_dev": 102,
+      "num_qrels_test": 1316
+    },
+    "ja": {
+      "config_prefix": "japanese",
+      "num_queries": 2687,
+      "num_corpus": 2687,
+      "num_qrels_train": 728,
+      "num_qrels_dev": 211,
+      "num_qrels_test": 1748
+    },
+    "ko": {
+      "config_prefix": "korean",
+      "num_queries": 1919,
+      "num_corpus": 1874,
+      "num_qrels_train": 522,
+      "num_qrels_dev": 120,
+      "num_qrels_test": 1277
+    },
+    "pl": {
+      "config_prefix": "polish",
+      "num_queries": 2798,
+      "num_corpus": 2729,
+      "num_qrels_train": 732,
+      "num_qrels_dev": 193,
+      "num_qrels_test": 1873
+    },
+    "pt": {
+      "config_prefix": "portuguese",
+      "num_queries": 2671,
+      "num_corpus": 2670,
+      "num_qrels_train": 761,
+      "num_qrels_dev": 135,
+      "num_qrels_test": 1775
+    },
+    "ta": {
+      "config_prefix": "tamil",
+      "num_queries": 2476,
+      "num_corpus": 2437,
+      "num_qrels_train": 693,
+      "num_qrels_dev": 199,
+      "num_qrels_test": 1584
+    },
+    "zh": {
+      "config_prefix": "chinese",
+      "num_queries": 2893,
+      "num_corpus": 2866,
+      "num_qrels_train": 833,
+      "num_qrels_dev": 195,
+      "num_qrels_test": 1865
+    }
+  },
+  "uploaded_repo_id": "whooray/xpqa"
+}
