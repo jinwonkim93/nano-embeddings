@@ -5,7 +5,7 @@ The script reads local CSV files and generates Ko-StrategyQA-compatible outputs.
 
 ## Required local files
 
-Place these files in `datasets/xpqa_ko_strategyqa/` (or point `--data-dir` elsewhere):
+Place these files in `datasets/xpqa` (or point `--data-dir` elsewhere):
 
 - `train.csv`
 - `dev.csv`
@@ -41,14 +41,14 @@ python datasets/xpqa_ko_strategyqa/prepare_xpqa.py
 
 Optional:
 
-- `--data-dir` (default: `datasets/xpqa_ko_strategyqa`)
-- `--output-dir` (default: `datasets/xpqa_ko_strategyqa`)
+- `--data-dir` (default: `datasets/xpqa`)
+- `--output-dir` (default: `datasets/xpqa`)
 - `--default-language` (set default Hub config language)
 
 ## Upload to Hub
 
 ```bash
-python datasets/xpqa_ko_strategyqa/prepare_xpqa.py \
+python datasets/xpqa/prepare_xpqa.py \
   --repo-id whooray/ko-strategyqa-xpqa \
   --default-language en
 ```
