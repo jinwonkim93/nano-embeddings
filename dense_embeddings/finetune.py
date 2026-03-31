@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import sys
@@ -23,10 +24,15 @@ else:
         sys.path.append(current_dir)
     from mps_cached_multiple_negatives_ranking_loss import MPSCachedMultipleNegativesRankingLoss
 
-# Set the log level to INFO to get more information
-logging.basicConfig(format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
 
-DATASET_NAME = "whooray/Ko-StrategyQA"
+DEFAULT_DATASET_NAME = "whooray/Ko-StrategyQA"
+DEFAULT_MODEL_NAME = "google/embeddinggemma-300m"
+DEFAULT_RUN_NAME = "embeddinggemma-300m-ko-strategyqa"
+
+
+def configure_logging() -> None:
+    logging.basicConfig(format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
 
 
 def load_config_split(dataset_name: str, config_name: str, split_candidates: tuple[str, ...]):
@@ -110,121 +116,169 @@ def using_mps() -> bool:
     return torch.backends.mps.is_available()
 
 
-# 1. Load a model to finetune with 2. (Optional) model card data
-model = SentenceTransformer(
-    "google/embeddinggemma-300m",
-    model_card_data=SentenceTransformerModelCardData(
-        language="ko",
-        license="apache-2.0",
-        model_name="EmbeddingGemma-300m trained on Ko-StrategyQA",
-    ),
-)
+def create_model(model_name: str) -> SentenceTransformer:
+    return SentenceTransformer(
+        model_name,
+        model_card_data=SentenceTransformerModelCardData(
+            language="ko",
+            license="apache-2.0",
+            model_name="EmbeddingGemma-300m trained on Ko-StrategyQA",
+        ),
+    )
 
-# 3. Load Ko-StrategyQA and create pair datasets from qrels + queries + corpus.
-train_qrels = load_dataset(DATASET_NAME, split="train")
-dev_qrels = load_dataset(DATASET_NAME, split="dev")
-queries_dataset = load_config_split(DATASET_NAME, "queries", ("ko", "queries", "train"))
-corpus_dataset = load_config_split(DATASET_NAME, "corpus", ("ko", "corpus", "train"))
 
-query_lookup = build_query_lookup(queries_dataset)
-corpus_lookup = build_corpus_lookup(corpus_dataset)
+def build_prompts(model: SentenceTransformer) -> dict[str, str] | None:
+    model_prompts = getattr(model, "prompts", None)
+    if not model_prompts:
+        return None
+    query_prompt = model_prompts.get("query")
+    document_prompt = model_prompts.get("document")
+    if not query_prompt or not document_prompt:
+        return None
+    return {
+        "question": query_prompt,
+        "passage_text": document_prompt,
+    }
 
-train_dataset = build_pair_dataset(train_qrels, query_lookup, corpus_lookup)
-eval_dataset = build_pair_dataset(dev_qrels, query_lookup, corpus_lookup)
-logging.info(
-    "Loaded Ko-StrategyQA: %d train pairs, %d dev pairs, %d corpus docs.",
-    len(train_dataset),
-    len(eval_dataset),
-    len(corpus_lookup),
-)
 
-# 4. Use CachedMNRL on CUDA/MPS. CPU falls back to MNRL.
-if using_cuda():
-    loss = CachedMultipleNegativesRankingLoss(model, mini_batch_size=8)
-    train_batch_size = 128
-    eval_batch_size = 128
-elif using_mps():
-    loss = MPSCachedMultipleNegativesRankingLoss(model, mini_batch_size=8)
-    train_batch_size = 32
-    eval_batch_size = 32
-else:
-    loss = MultipleNegativesRankingLoss(model)
-    train_batch_size = 32
-    eval_batch_size = 32
-    logging.warning("Neither CUDA nor MPS is available. Falling back to MultipleNegativesRankingLoss on CPU.")
+def add_common_training_args(
+    training_args: dict[str, object],
+    report_to: str,
+    run_name: str,
+) -> dict[str, object]:
+    training_args["report_to"] = report_to
+    training_args["run_name"] = run_name
+    if report_to != "none":
+        training_args["project"] = "nanoembeddings"
+        training_args["trackio_space_id"] = None
+    return training_args
 
-use_cuda = using_cuda()
-use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
-use_fp16 = use_cuda and not use_bf16
 
-# 5. (Optional) Specify training arguments
-run_name = "embeddinggemma-300m-ko-strategyqa"
-args = SentenceTransformerTrainingArguments(
-    # Required parameter:
-    output_dir=f"models/{run_name}",
-    # Optional training parameters:
-    num_train_epochs=1,
-    per_device_train_batch_size=train_batch_size,
-    per_device_eval_batch_size=eval_batch_size,
-    learning_rate=2e-5,
-    warmup_ratio=0.1,
-    fp16=use_fp16,
-    bf16=use_bf16,
-    batch_sampler=BatchSamplers.NO_DUPLICATES,  # (Cached)MultipleNegativesRankingLoss benefits from no duplicate samples in a batch
-    prompts={  # Map training column names to model prompts
-        "question": model.prompts["query"],
-        "passage_text": model.prompts["document"],
-    },
-    # Optional tracking/debugging parameters:
-    eval_strategy="steps",
-    eval_steps=100,
-    save_strategy="steps",
-    save_steps=100,
-    save_total_limit=2,
-    logging_steps=5,
-    report_to="trackio",
-    project="nanoembeddings",
-    trackio_space_id=None,  # Keep logs local by default; set a Space ID to publish.
-    run_name=run_name,  # Used by Trackio as the run name.
-)
+def run(args: argparse.Namespace) -> str:
+    configure_logging()
 
-# 6. (Optional) Create a retrieval evaluator from the Ko-StrategyQA dev qrels.
-queries, corpus, relevant_docs = build_ir_eval_data(dev_qrels, query_lookup, corpus_lookup)
-dev_evaluator = InformationRetrievalEvaluator(
-    queries=queries,
-    corpus=corpus,
-    relevant_docs=relevant_docs,
-    name="ko-strategyqa-dev",
-    show_progress_bar=True,
-)
-dev_evaluator(model)
+    dataset_name = args.dataset_name
+    model = create_model(args.model_name)
 
-# 7. Create a trainer & train
-trainer = SentenceTransformerTrainer(
-    model=model,
-    args=args,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
-    loss=loss,
-    evaluator=dev_evaluator,
-)
-trainer.train()
+    train_qrels = load_dataset(dataset_name, split="train")
+    dev_qrels = load_dataset(dataset_name, split="dev")
+    queries_dataset = load_config_split(dataset_name, "queries", ("ko", "queries", "train"))
+    corpus_dataset = load_config_split(dataset_name, "corpus", ("ko", "corpus", "train"))
 
-# (Optional) Evaluate the trained model on the evaluation set once more, this will also log the results
-# and include them in the model card
-dev_evaluator(model)
+    query_lookup = build_query_lookup(queries_dataset)
+    corpus_lookup = build_corpus_lookup(corpus_dataset)
 
-# 8. Save the trained model
-final_output_dir = f"models/{run_name}/final"
-model.save_pretrained(final_output_dir)
+    train_dataset = build_pair_dataset(train_qrels, query_lookup, corpus_lookup)
+    eval_dataset = build_pair_dataset(dev_qrels, query_lookup, corpus_lookup)
+    LOGGER.info(
+        "Loaded Ko-StrategyQA: %d train pairs, %d dev pairs, %d corpus docs.",
+        len(train_dataset),
+        len(eval_dataset),
+        len(corpus_lookup),
+    )
 
-# 9. (Optional) Push it to the Hugging Face Hub
-# It is recommended to run `huggingface-cli login` to log into your Hugging Face account first
-# try:
-#     model.push_to_hub(run_name)
-# except Exception:
-#     logging.error(
-#         f"Error uploading model to the Hugging Face Hub:\n{traceback.format_exc()}To upload it manually, you can run "
-#         f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({final_output_dir!r})` "
-#         f"and saving it using `model.push_to_hub('{run_name}')`."
-#     )
+    if using_cuda():
+        loss = CachedMultipleNegativesRankingLoss(model, mini_batch_size=8)
+        train_batch_size = 128
+        eval_batch_size = 128
+    elif using_mps():
+        loss = MPSCachedMultipleNegativesRankingLoss(model, mini_batch_size=8)
+        train_batch_size = 32
+        eval_batch_size = 32
+    else:
+        loss = MultipleNegativesRankingLoss(model)
+        train_batch_size = 32
+        eval_batch_size = 32
+        LOGGER.warning("Neither CUDA nor MPS is available. Falling back to MultipleNegativesRankingLoss on CPU.")
+
+    use_cuda = using_cuda()
+    use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
+    use_fp16 = use_cuda and not use_bf16
+
+    run_name = args.run_name or DEFAULT_RUN_NAME
+    output_dir = args.output_dir or f"models/{run_name}"
+    training_args = {
+        "output_dir": output_dir,
+        "num_train_epochs": args.num_train_epochs,
+        "per_device_train_batch_size": train_batch_size,
+        "per_device_eval_batch_size": eval_batch_size,
+        "learning_rate": args.learning_rate,
+        "warmup_ratio": 0.1,
+        "fp16": use_fp16,
+        "bf16": use_bf16,
+        "batch_sampler": BatchSamplers.NO_DUPLICATES,
+        "eval_strategy": "steps",
+        "eval_steps": 100,
+        "save_strategy": "steps",
+        "save_steps": 100,
+        "save_total_limit": 2,
+        "logging_steps": 5,
+    }
+    prompts = build_prompts(model)
+    if prompts is not None:
+        training_args["prompts"] = prompts
+    add_common_training_args(training_args, args.report_to, run_name)
+    trainer_args = SentenceTransformerTrainingArguments(**training_args)
+
+    queries, corpus, relevant_docs = build_ir_eval_data(dev_qrels, query_lookup, corpus_lookup)
+    dev_evaluator = InformationRetrievalEvaluator(
+        queries=queries,
+        corpus=corpus,
+        relevant_docs=relevant_docs,
+        name="ko-strategyqa-dev",
+        show_progress_bar=True,
+    )
+    dev_evaluator(model)
+
+    trainer = SentenceTransformerTrainer(
+        model=model,
+        args=trainer_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        loss=loss,
+        evaluator=dev_evaluator,
+    )
+    trainer.train()
+    dev_evaluator(model)
+
+    final_output_dir = f"{output_dir}/final"
+    model.save_pretrained(final_output_dir)
+    return final_output_dir
+
+
+def add_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--dataset-name", default=DEFAULT_DATASET_NAME, help="Retrieval dataset on the Hugging Face Hub.")
+    parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME, help="Base dense model checkpoint.")
+    parser.add_argument("--run-name", default=DEFAULT_RUN_NAME, help="Training run name.")
+    parser.add_argument("--output-dir", default=None, help="Override the checkpoint output directory.")
+    parser.add_argument("--num-train-epochs", type=float, default=1, help="Number of training epochs.")
+    parser.add_argument("--learning-rate", type=float, default=2e-5, help="Optimizer learning rate.")
+    parser.add_argument(
+        "--report-to",
+        default="trackio",
+        help="Tracking integration name. Use 'none' to disable external logging.",
+    )
+    return parser
+
+
+def add_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser("dense-finetune", help="Run the existing Ko-StrategyQA dense training recipe.")
+    add_arguments(parser)
+    parser.set_defaults(func=run)
+    return parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the dense Ko-StrategyQA finetuning recipe.")
+    add_arguments(parser)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> str:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return run(args)
+
+
+if __name__ == "__main__":
+    main()
